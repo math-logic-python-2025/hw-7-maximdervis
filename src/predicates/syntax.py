@@ -110,6 +110,7 @@ class Term:
         if is_constant(root) or is_variable(root):
             assert arguments is None
             self.root = root
+            self.arguments = None
         else:
             assert is_function(root)
             assert arguments is not None and len(arguments) > 0
@@ -124,6 +125,9 @@ class Term:
             The standard string representation of the current term.
         """
         # Task 7.1
+        if self.arguments is None:
+            return self.root
+        return f"{self.root}({','.join(str(arg) for arg in self.arguments)})"
 
     def __eq__(self, other: object) -> bool:
         """Compares the current term with the given one.
@@ -167,6 +171,29 @@ class Term:
             that entire name (and not just a part of it, such as ``'x1'``).
         """
         # Task 7.3a
+        if not string:
+            raise SyntaxError("Empty string")
+        if string[0] == '_':
+            return Term('_'), string[1:]
+        i = 1
+        while i < len(string) and string[i].isalnum():
+            i += 1
+        prefix = string[:i]
+        if is_constant(prefix) or is_variable(prefix):
+            return Term(prefix), string[i:]
+        if is_function(prefix):
+            if i >= len(string) or string[i] != '(':
+                raise SyntaxError("Expected '(' after function name")
+            arguments = []
+            remainder = string[i + 1:]
+            while remainder and remainder[0] != ')':
+                argument, remainder = Term._parse_prefix(remainder)
+                arguments.append(argument)
+                remainder = remainder[1:] if remainder and remainder[0] == ',' else remainder
+            if not remainder or remainder[0] != ')':
+                raise SyntaxError("Expected ')' after function arguments")
+            return Term(prefix, arguments), remainder[1:]
+        raise SyntaxError("Invalid term")
 
     @staticmethod
     def parse(string: str) -> Term:
@@ -179,6 +206,10 @@ class Term:
             A term whose standard string representation is the given string.
         """
         # Task 7.3b
+        term, remainder = Term._parse_prefix(string)
+        if remainder:
+            raise SyntaxError("Extra text after term")
+        return term
 
     def constants(self) -> Set[str]:
         """Finds all constant names in the current term.
@@ -187,6 +218,9 @@ class Term:
             A set of all constant names used in the current term.
         """
         # Task 7.5a
+        if is_constant(self.root):
+            return {self.root}
+        return set().union(*(arg.constants() for arg in self.arguments)) if self.arguments else set()
 
     def variables(self) -> Set[str]:
         """Finds all variable names in the current term.
@@ -195,6 +229,9 @@ class Term:
             A set of all variable names used in the current term.
         """
         # Task 7.5b
+        if is_variable(self.root):
+            return {self.root}
+        return set().union(*(arg.variables() for arg in self.arguments)) if self.arguments else set()
 
     def functions(self) -> Set[Tuple[str, int]]:
         """Finds all function names in the current term, along with their
@@ -205,6 +242,9 @@ class Term:
             all function names used in the current term.
         """
         # Task 7.5c
+        if is_constant(self.root) or is_variable(self.root):
+            return set()
+        return {(self.root, len(self.arguments))}.union(*(arg.functions() for arg in self.arguments))
 
     def substitute(
         self,
@@ -408,6 +448,16 @@ class Formula:
             The standard string representation of the current formula.
         """
         # Task 7.2
+        if is_unary(self.root):  # For formulas like ~R(x)
+            return f"{self.root}{self.first}"
+        if is_binary(self.root):  # For formulas like (P->Q)
+            return f"({self.first}{self.root}{self.second})"
+        if is_quantifier(self.root):  # For formulas like Ax[...]
+            return f"{self.root}{self.variable}[{self.statement}]"
+        if is_equality(self.root):  # For formulas like x=y
+            return f"{self.arguments[0]}={self.arguments[1]}"
+        if is_relation(self.root):  # For formulas like R(x,y)
+            return f"{self.root}({','.join(str(arg) for arg in self.arguments)})"
 
     def __eq__(self, other: object) -> bool:
         """Compares the current formula with the given one.
@@ -452,6 +502,62 @@ class Formula:
             that entire name (and not just a part of it, such as ``'f(y)=x1'``).
         """
         # Task 7.4a
+        if not string:
+            raise SyntaxError("Empty string")
+        if string[0] in ['A', 'E']:
+            i = 1
+            while i < len(string) and string[i].isalnum():
+                i += 1
+            variable = string[1:i]
+            if not is_variable(variable) or i >= len(string) or string[i] != '[':
+                raise SyntaxError("Invalid quantifier syntax")
+            formula, remainder = Formula._parse_prefix(string[i+1:])
+            if not remainder or remainder[0] != ']':
+                raise SyntaxError("Expected ']' after quantified formula")
+            return Formula(string[0], variable, formula), remainder[1:]
+        if string[0] == '~':
+            formula, remainder = Formula._parse_prefix(string[1:])
+            return Formula('~', formula), remainder
+        if string[0] == '(':
+            first, remainder = Formula._parse_prefix(string[1:])
+            if not remainder:
+                raise SyntaxError("Expected binary operator")
+            operator = remainder[0]
+            if operator == '-':
+                if len(remainder) < 2 or remainder[1] != '>':
+                    raise SyntaxError("Expected '->'")
+                operator, remainder = '->', remainder[2:]
+            elif operator in ['&', '|']:
+                remainder = remainder[1:]
+            else:
+                raise SyntaxError("Invalid binary operator")
+            second, remainder = Formula._parse_prefix(remainder)
+            if not remainder or remainder[0] != ')':
+                raise SyntaxError("Expected ')' after binary formula")
+            return Formula(operator, first, second), remainder[1:]
+        if string[0].isupper():
+            i = 1
+            while i < len(string) and string[i].isalnum():
+                i += 1
+            relation = string[:i]
+            if not is_relation(relation):
+                raise SyntaxError("Invalid relation")
+            if i >= len(string) or string[i] != '(':
+                raise SyntaxError("Expected '(' after relation")
+            arguments = []
+            remainder = string[i+1:]
+            while remainder and remainder[0] != ')':
+                argument, remainder = Term._parse_prefix(remainder)
+                arguments.append(argument)
+                remainder = remainder[1:] if remainder and remainder[0] == ',' else remainder
+            if not remainder or remainder[0] != ')':
+                raise SyntaxError("Expected ')' after relation arguments")
+            return Formula(relation, arguments), remainder[1:]
+        left, remainder = Term._parse_prefix(string)
+        if not remainder or remainder[0] != '=':
+            raise SyntaxError("Expected '=' in equality")
+        right, remainder = Term._parse_prefix(remainder[1:])
+        return Formula('=', [left, right]), remainder
 
     @staticmethod
     def parse(string: str) -> Formula:
@@ -464,6 +570,10 @@ class Formula:
             A formula whose standard string representation is the given string.
         """
         # Task 7.4b
+        formula, remainder = Formula._parse_prefix(string)
+        if remainder:
+            raise SyntaxError("Extra text after formula")
+        return formula
 
     def constants(self) -> Set[str]:
         """Finds all constant names in the current formula.
@@ -472,6 +582,11 @@ class Formula:
             A set of all constant names used in the current formula.
         """
         # Task 7.6a
+        if is_unary(self.root) or is_binary(self.root):
+            return self.first.constants() | (self.second.constants() if is_binary(self.root) else set())
+        if is_quantifier(self.root):
+            return self.statement.constants()
+        return set().union(*(arg.constants() for arg in self.arguments))
 
     def variables(self) -> Set[str]:
         """Finds all variable names in the current formula.
@@ -480,6 +595,11 @@ class Formula:
             A set of all variable names used in the current formula.
         """
         # Task 7.6b
+        if is_unary(self.root) or is_binary(self.root):
+            return self.first.variables() | (self.second.variables() if is_binary(self.root) else set())
+        if is_quantifier(self.root):
+            return {self.variable} | self.statement.variables()
+        return set().union(*(arg.variables() for arg in self.arguments))
 
     def free_variables(self) -> Set[str]:
         """Finds all variable names that are free in the current formula.
@@ -489,6 +609,11 @@ class Formula:
             only within a scope of a quantification on that variable name.
         """
         # Task 7.6c
+        if is_unary(self.root) or is_binary(self.root):
+            return self.first.free_variables() | (self.second.free_variables() if is_binary(self.root) else set())
+        if is_quantifier(self.root):
+            return self.statement.free_variables() - {self.variable}
+        return set().union(*(arg.variables() for arg in self.arguments))
 
     def functions(self) -> Set[Tuple[str, int]]:
         """Finds all function names in the current formula, along with their
@@ -499,6 +624,13 @@ class Formula:
             all function names used in the current formula.
         """
         # Task 7.6d
+        if is_unary(self.root):
+            return self.first.functions()
+        if is_binary(self.root):
+            return self.first.functions() | self.second.functions()
+        if is_quantifier(self.root):
+            return self.statement.functions()
+        return set().union(*(arg.functions() for arg in self.arguments))
 
     def relations(self) -> Set[Tuple[str, int]]:
         """Finds all relation names in the current formula, along with their
@@ -509,6 +641,13 @@ class Formula:
             all relation names used in the current formula.
         """
         # Task 7.6e
+        if is_unary(self.root) or is_binary(self.root):
+            return self.first.relations() | (self.second.relations() if is_binary(self.root) else set())
+        if is_quantifier(self.root):
+            return self.statement.relations()
+        if is_equality(self.root):
+            return set()
+        return {(self.root, len(self.arguments))}
 
     def substitute(
         self,
